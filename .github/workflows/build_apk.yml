@@ -124,7 +124,7 @@ jobs:
           </manifest>
           EOF
 
-          # 6. RadioService.java (Multi-app Sound Mixer, Speed, Volume, Full Notification Clicks)
+          # 6. RadioService.java (Fixed Multi-App Sound Slider & Synced Live Notification Seekbar)
           cat << 'EOF' > native_app/app/src/main/java/com/sagar/airfm/RadioService.java
           package com.sagar.airfm;
 
@@ -134,6 +134,7 @@ jobs:
           import android.app.PendingIntent;
           import android.app.Service;
           import android.content.Intent;
+          import android.media.AudioManager;
           import android.os.Binder;
           import android.os.Build;
           import android.os.Handler;
@@ -161,6 +162,8 @@ jobs:
               private MediaSessionCompat mediaSession;
               private String currentTitle = "AIR FM Rainbow 102.6";
               private String currentSub = "Live Broadcast";
+              private boolean isLiveStream = true;
+              private long activeDurationMs = 0;
               private final IBinder binder = new LocalBinder();
               private final Handler timeHandler = new Handler(Looper.getMainLooper());
               private ProgressCallback progressCallback;
@@ -192,6 +195,7 @@ jobs:
                   createChannel();
 
                   mediaSession = new MediaSessionCompat(this, "AirFmMediaSession");
+                  mediaSession.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS | MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
                   mediaSession.setCallback(new MediaSessionCompat.Callback() {
                       @Override
                       public void onPlay() { toggle(); }
@@ -210,14 +214,16 @@ jobs:
                   });
                   mediaSession.setActive(true);
 
-                  // Registers the app explicitly into Android's multi-app sound volume mixer
+                  // 1. Android 14/15 Multi-App Volume Mixer Support
+                  // Registers STREAM_MUSIC to ensure Android sound panel assigns an app volume slider
                   AudioAttributes audioAttributes = new AudioAttributes.Builder()
                           .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                           .setUsage(C.USAGE_MEDIA)
+                          .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_ALL)
                           .build();
 
                   player = new ExoPlayer.Builder(this)
-                          .setAudioAttributes(audioAttributes, false)
+                          .setAudioAttributes(audioAttributes, false) // False keeps dual-audio mixing enabled
                           .build();
 
                   player.addListener(new Player.Listener() {
@@ -226,8 +232,22 @@ jobs:
                           updatePlaybackState(isPlaying);
                           updateNotification(isPlaying);
                       }
+
+                      @Override
+                      public void onPlaybackStateChanged(int playbackState) {
+                          if (playbackState == Player.STATE_READY) {
+                              long dur = player.getDuration();
+                              if (dur > 0 && !isLiveStream) {
+                                  activeDurationMs = dur;
+                              }
+                              updateMetadata();
+                              updatePlaybackState(player.isPlaying());
+                          }
+                      }
                   });
 
+                  updateMetadata();
+                  updatePlaybackState(false);
                   startForeground(101, buildMediaNotification(false));
                   startTimeLoop();
               }
@@ -236,22 +256,36 @@ jobs:
                   timeHandler.postDelayed(new Runnable() {
                       @Override
                       public void run() {
-                          if (player != null && progressCallback != null) {
-                              progressCallback.onProgress(player.getCurrentPosition(), player.getDuration(), player.isPlaying());
+                          if (player != null) {
+                              long cur = player.getCurrentPosition();
+                              long dur = player.getDuration();
+
+                              if (!isLiveStream && dur > 0 && dur != activeDurationMs) {
+                                  activeDurationMs = dur;
+                                  updateMetadata();
+                              }
+
+                              if (progressCallback != null) {
+                                  progressCallback.onProgress(cur, activeDurationMs, player.isPlaying());
+                              }
+
+                              // Keep media session state and position in continuous sync for system notification seekbar
+                              if (player.isPlaying() && !isLiveStream) {
+                                  updatePlaybackState(true);
+                              }
                           }
-                          timeHandler.postDelayed(this, 500);
+                          timeHandler.postDelayed(this, 1000);
                       }
-                  }, 500);
+                  }, 1000);
               }
 
-              public void playUrl(String streamUrl, String title, String sub) {
+              public void playUrl(String streamUrl, String title, String sub, boolean isLive) {
                   this.currentTitle = (title != null && !title.isEmpty()) ? title : "AIR FM Rainbow";
                   this.currentSub = (sub != null && !sub.isEmpty()) ? sub : "Broadcast";
+                  this.isLiveStream = isLive;
+                  this.activeDurationMs = isLive ? -1 : 3600000; // 1 hour (3600s) default for archives
 
-                  mediaSession.setMetadata(new MediaMetadataCompat.Builder()
-                          .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
-                          .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentSub)
-                          .build());
+                  updateMetadata();
 
                   if (player != null) {
                       player.stop();
@@ -270,19 +304,27 @@ jobs:
               }
 
               public void seekTo(long targetMs) {
-                  if (player != null) player.seekTo(targetMs);
+                  if (player != null && !isLiveStream) {
+                      player.seekTo(targetMs);
+                      updatePlaybackState(player.isPlaying());
+                  }
               }
 
               public void seekDelta(long deltaMs) {
-                  if (player != null) {
+                  if (player != null && !isLiveStream) {
                       long target = Math.max(0, player.getCurrentPosition() + deltaMs);
+                      if (activeDurationMs > 0) {
+                          target = Math.min(target, activeDurationMs);
+                      }
                       player.seekTo(target);
+                      updatePlaybackState(player.isPlaying());
                   }
               }
 
               public void setSpeed(float speed) {
                   if (player != null) {
                       player.setPlaybackParameters(new PlaybackParameters(speed));
+                      updatePlaybackState(player.isPlaying());
                   }
               }
 
@@ -298,17 +340,33 @@ jobs:
                   }
               }
 
+              private void updateMetadata() {
+                  long notifDuration = isLiveStream ? -1 : (activeDurationMs > 0 ? activeDurationMs : 3600000);
+                  MediaMetadataCompat.Builder meta = new MediaMetadataCompat.Builder()
+                          .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
+                          .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentSub)
+                          .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, notifDuration);
+
+                  mediaSession.setMetadata(meta.build());
+              }
+
+              // 2. Notification Seekbar Synced with Actual Current Time & Full Length
               private void updatePlaybackState(boolean isPlaying) {
                   long actions = PlaybackStateCompat.ACTION_PLAY | PlaybackStateCompat.ACTION_PAUSE |
                           PlaybackStateCompat.ACTION_PLAY_PAUSE | PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
-                          PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS | PlaybackStateCompat.ACTION_FAST_FORWARD |
-                          PlaybackStateCompat.ACTION_REWIND | PlaybackStateCompat.ACTION_SEEK_TO;
+                          PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS;
+
+                  if (!isLiveStream) {
+                      actions |= PlaybackStateCompat.ACTION_SEEK_TO | PlaybackStateCompat.ACTION_FAST_FORWARD | PlaybackStateCompat.ACTION_REWIND;
+                  }
 
                   int state = isPlaying ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED;
-                  long pos = player != null ? player.getCurrentPosition() : 0;
+                  long currentPos = player != null ? player.getCurrentPosition() : 0;
+                  float currentSpeed = (player != null && isPlaying) ? player.getPlaybackParameters().speed : 0.0f;
+
                   mediaSession.setPlaybackState(new PlaybackStateCompat.Builder()
                           .setActions(actions)
-                          .setState(state, pos, player != null ? player.getPlaybackParameters().speed : 1.0f)
+                          .setState(state, currentPos, currentSpeed)
                           .build());
               }
 
@@ -465,9 +523,9 @@ jobs:
 
                   webView.addJavascriptInterface(new Object() {
                       @JavascriptInterface
-                      public void play(String url, String title, String sub) {
+                      public void play(String url, String title, String sub, boolean isLive) {
                           runOnUiThread(() -> {
-                              if (bound && service != null) service.playUrl(url, title, sub);
+                              if (bound && service != null) service.playUrl(url, title, sub, isLive);
                           });
                       }
 
@@ -520,7 +578,7 @@ jobs:
           }
           EOF
 
-          # 8. EMBEDDED ORIGINAL HTML (Exact original dark-style UI with all features natively connected)
+          # 8. EMBEDDED ORIGINAL HTML (Exact original UI, clean & complete)
           cat << 'EOF' > native_app/app/src/main/assets/index.html
           <!DOCTYPE html>
           <html lang="en">
@@ -778,7 +836,6 @@ jobs:
               .toast-alert p { font-size: 0.78rem; color: #fca5a5; line-height: 1.35; flex: 1; }
               .toast-alert button { background: #ef4444; border: none; color: #fff; font-size: 0.72rem; font-weight: 700; padding: 6px 12px; border-radius: var(--radius-pill); cursor: pointer; }
 
-              /* Original Quick Filter & Modern Date Picker Stepper */
               .date-panel {
                 background: var(--card-bg);
                 backdrop-filter: blur(16px);
@@ -814,7 +871,6 @@ jobs:
                 cursor: pointer;
               }
 
-              /* 12 Horizontal Hourly Slices (07 AM to 07 PM) */
               .timeline-container { display: flex; flex-direction: column; gap: 8px; }
               .section-label-row { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; }
               .section-label { font-size: 0.76rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
@@ -926,7 +982,6 @@ jobs:
               <button onclick="switchToLiveMode()">Go Live</button>
             </div>
 
-            <!-- Modern Date Stepper & Native Picker -->
             <div class="date-panel">
               <div class="quick-chips-row">
                 <button class="chip-btn active" id="chipToday" onclick="applyQuickDate(0)">Today</button>
@@ -944,7 +999,6 @@ jobs:
               </div>
             </div>
 
-            <!-- Original 12 Hourly Slices -->
             <div class="timeline-container">
               <div class="section-label-row">
                 <span class="section-label">Hourly Timeline (07 AM &ndash; 07 PM IST)</span>
@@ -1059,22 +1113,20 @@ jobs:
                 scrubThumb.style.left = pct + "%";
               }
 
-              // Auto advance near completion
               if (durMs > 0 && curMs >= durMs - 1200) {
                 handleTrackEnd();
               }
             };
 
-            // Notification Actions Callback
             window.handleNativeAction = function(action) {
               if (action === "next") playNext();
               else if (action === "prev") playPrevious();
             };
 
-            function playViaNativeBridge(url, title, sub) {
+            function playViaNativeBridge(url, title, sub, isLive) {
               if (window.NativeAudioBridge) {
                 toastAlert.style.display = "none";
-                window.NativeAudioBridge.play(url, title, sub);
+                window.NativeAudioBridge.play(url, title, sub, isLive);
                 isNativePlaying = true;
                 setPlayState(true);
                 return true;
@@ -1103,7 +1155,7 @@ jobs:
               totalDurationDisplay.innerText = "LIVE";
 
               const freshLiveUrl = `${STREAM_URL}?ts=${Date.now()}`;
-              if (playViaNativeBridge(freshLiveUrl, "AIR FM Rainbow 102.6", "Live Broadcast")) return;
+              if (playViaNativeBridge(freshLiveUrl, "AIR FM Rainbow 102.6", "Live Broadcast", true)) return;
               loadSource(freshLiveUrl, true);
             }
 
@@ -1141,7 +1193,7 @@ jobs:
               totalDurationDisplay.innerText = "60:00";
 
               const fileUrl = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/archive-${chosenDate}/${chosenDate}_${hourBlocks[index].file}`;
-              if (playViaNativeBridge(fileUrl, `FM Rainbow: ${slot.label}`, `Recorded Archive (${chosenDate})`)) return;
+              if (playViaNativeBridge(fileUrl, `FM Rainbow: ${slot.label}`, `Recorded Archive (${chosenDate})`, false)) return;
               loadSource(fileUrl, false);
             }
 
