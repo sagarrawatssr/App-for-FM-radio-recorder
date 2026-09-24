@@ -1,0 +1,536 @@
+name: Build Dual Audio Radio APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Accept Android SDK Licenses
+        run: |
+          yes | sdkmanager --licenses || true
+
+      - name: Build App Project
+        run: |
+          mkdir -p native_app/app/src/main/java/com/sagar/airfm
+          mkdir -p native_app/app/src/main/res/values
+          mkdir -p native_app/app/src/main/assets
+
+          cp index.html native_app/app/src/main/assets/index.html
+
+          # 1. gradle.properties
+          cat << 'EOF' > native_app/gradle.properties
+          android.useAndroidX=true
+          android.enableJetifier=true
+          EOF
+
+          # 2. settings.gradle
+          cat << 'EOF' > native_app/settings.gradle
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "AIR FM Rainbow"
+          include ':app'
+          EOF
+
+          # 3. Root build.gradle
+          cat << 'EOF' > native_app/build.gradle
+          plugins {
+              id 'com.android.application' version '8.4.1' apply false
+          }
+          EOF
+
+          # 4. App-level build.gradle
+          cat << 'EOF' > native_app/app/build.gradle
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.sagar.airfm'
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId "com.sagar.airfm"
+                  minSdk 26
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+
+          dependencies {
+              implementation 'androidx.media3:media3-exoplayer:1.3.1'
+              implementation 'androidx.media3:media3-exoplayer-hls:1.3.1'
+              implementation 'androidx.media3:media3-session:1.3.1'
+              implementation 'androidx.core:core:1.13.1'
+              implementation 'androidx.media:media:1.7.0'
+          }
+          EOF
+
+          # 5. AndroidManifest.xml
+          cat << 'EOF' > native_app/app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <application
+                  android:label="AIR FM Rainbow"
+                  android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+                  android:usesCleartextTraffic="true">
+                  <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <service
+                      android:name=".RadioService"
+                      android:foregroundServiceType="mediaPlayback"
+                      android:exported="false" />
+              </application>
+          </manifest>
+          EOF
+
+          # 6. RadioService.java
+          cat << 'EOF' > native_app/app/src/main/java/com/sagar/airfm/RadioService.java
+          package com.sagar.airfm;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.app.Service;
+          import android.content.Intent;
+          import android.os.Binder;
+          import android.os.Build;
+          import android.os.Handler;
+          import android.os.IBinder;
+          import android.os.Looper;
+          import android.support.v4.media.MediaMetadataCompat;
+          import android.support.v4.media.session.MediaSessionCompat;
+          import android.support.v4.media.session.PlaybackStateCompat;
+          import androidx.core.app.NotificationCompat;
+          import androidx.media3.common.AudioAttributes;
+          import androidx.media3.common.C;
+          import androidx.media3.common.MediaItem;
+          import androidx.media3.common.PlaybackParameters;
+          import androidx.media3.common.Player;
+          import androidx.media3.exoplayer.ExoPlayer;
+
+          public class RadioService extends Service {
+              public static final String ACTION_TOGGLE = "com.sagar.airfm.ACTION_TOGGLE";
+              public static final String ACTION_PREV = "com.sagar.airfm.ACTION_PREV";
+              public static final String ACTION_NEXT = "com.sagar.airfm.ACTION_NEXT";
+              public static final String ACTION_REWIND = "com.sagar.airfm.ACTION_REWIND";
+              public static final String ACTION_FORWARD = "com.sagar.airfm.ACTION_FORWARD";
+
+              private ExoPlayer player;
+              private MediaSessionCompat mediaSession;
+              private String currentTitle = "AIR FM Rainbow 102.6";
+              private String currentSub = "Live Broadcast";
+              private final IBinder binder = new LocalBinder();
+              private final Handler timeHandler = new Handler(Looper.getMainLooper());
+              private ProgressCallback progressCallback;
+              private ActionListener actionListener;
+
+              public interface ProgressCallback {
+                  void onProgress(long currentMs, long durationMs, boolean isPlaying);
+              }
+
+              public interface ActionListener {
+                  void onAction(String action);
+              }
+
+              public class LocalBinder extends Binder {
+                  public RadioService getService() { return RadioService.this; }
+              }
+
+              public void setProgressCallback(ProgressCallback callback) {
+                  this.progressCallback = callback;
+              }
+
+              public void setActionListener(ActionListener listener) {
+                  this.actionListener = listener;
+              }
+
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+                  createChannel();
+
+                  mediaSession = new MediaSessionCompat(this, "AirFmMediaSession");
+                  mediaSession.setCallback(new MediaSessionCompat.Callback() {
+                      @Override
+                      public void onPlay() { toggle(); }
+                      @Override
+                      public void onPause() { toggle(); }
+                      @Override
+                      public void onSkipToNext() { triggerAction("next"); }
+                      @Override
+                      public void onSkipToPrevious() { triggerAction("prev"); }
+                      @Override
+                      public void onFastForward() { seekDelta(10000); }
+                      @Override
+                      public void onRewind() { seekDelta(-10000); }
+                      @Override
+                      public void onSeekTo(long pos) { seekTo(pos); }
+                  });
+                  mediaSession.setActive(true);
+
+                  // AudioAttributes registers this app under Android's multi-app sound mixer
+                  AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                          .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                          .setUsage(C.USAGE_MEDIA)
+                          .build();
+
+                  // handleAudioFocus = false enables simultaneous background playback with other apps
+                  player = new ExoPlayer.Builder(this)
+                          .setAudioAttributes(audioAttributes, false)
+                          .build();
+
+                  player.addListener(new Player.Listener() {
+                      @Override
+                      public void onIsPlayingChanged(boolean isPlaying) {
+                          updatePlaybackState(isPlaying);
+                          updateNotification(isPlaying);
+                      }
+                  });
+
+                  startForeground(101, buildMediaNotification(false));
+                  startTimeLoop();
+              }
+
+              private void startTimeLoop() {
+                  timeHandler.postDelayed(new Runnable() {
+                      @Override
+                      public void run() {
+                          if (player != null && progressCallback != null) {
+                              progressCallback.onProgress(player.getCurrentPosition(), player.getDuration(), player.isPlaying());
+                          }
+                          timeHandler.postDelayed(this, 500);
+                      }
+                  }, 500);
+              }
+
+              public void playUrl(String streamUrl, String title, String sub) {
+                  this.currentTitle = (title != null && !title.isEmpty()) ? title : "AIR FM Rainbow";
+                  this.currentSub = (sub != null && !sub.isEmpty()) ? sub : "Broadcast";
+
+                  mediaSession.setMetadata(new MediaMetadataCompat.Builder()
+                          .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
+                          .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentSub)
+                          .build());
+
+                  if (player != null) {
+                      player.stop();
+                      player.clearMediaItems();
+                      player.setMediaItem(MediaItem.fromUri(streamUrl));
+                      player.prepare();
+                      player.play();
+                  }
+              }
+
+              public void toggle() {
+                  if (player != null) {
+                      if (player.isPlaying()) player.pause();
+                      else player.play();
+                  }
+              }
+
+              public void seekTo(long targetMs) {
+                  if (player != null) player.seekTo(targetMs);
+              }
+
+              public void seekDelta(long deltaMs) {
+                  if (player != null) {
+                      long target = Math.max(0, player.getCurrentPosition() + deltaMs);
+                      player.seekTo(target);
+                  }
+              }
+
+              public void setSpeed(float speed) {
+                  if (player != null) {
+                      player.setPlaybackParameters(new PlaybackParameters(speed));
+                  }
+              }
+
+              public void setVolumeLevel(float volume) {
+                  if (player != null) {
+                      player.setVolume(Math.max(0.0f, Math.min(1.0f, volume)));
+                  }
+              }
+
+              private void triggerAction(String act) {
+                  if (actionListener != null) {
+                      actionListener.onAction(act);
+                  }
+              }
+
+              private void updatePlaybackState(boolean isPlaying) {
+                  long actions = PlaybackStateCompat.ACTION_PLAY | PlaybackStateCompat.ACTION_PAUSE |
+                          PlaybackStateCompat.ACTION_PLAY_PAUSE | PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
+                          PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS | PlaybackStateCompat.ACTION_FAST_FORWARD |
+                          PlaybackStateCompat.ACTION_REWIND | PlaybackStateCompat.ACTION_SEEK_TO;
+
+                  int state = isPlaying ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED;
+                  long pos = player != null ? player.getCurrentPosition() : 0;
+                  mediaSession.setPlaybackState(new PlaybackStateCompat.Builder()
+                          .setActions(actions)
+                          .setState(state, pos, player != null ? player.getPlaybackParameters().speed : 1.0f)
+                          .build());
+              }
+
+              private void updateNotification(boolean isPlaying) {
+                  NotificationManager nm = getSystemService(NotificationManager.class);
+                  if (nm != null) {
+                      nm.notify(101, buildMediaNotification(isPlaying));
+                  }
+              }
+
+              private Notification buildMediaNotification(boolean isPlaying) {
+                  Intent openIntent = new Intent(this, MainActivity.class);
+                  PendingIntent piOpen = PendingIntent.getActivity(
+                          this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                  );
+
+                  PendingIntent piPrev = PendingIntent.getService(this, 1, new Intent(this, RadioService.class).setAction(ACTION_PREV), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                  PendingIntent piRewind = PendingIntent.getService(this, 2, new Intent(this, RadioService.class).setAction(ACTION_REWIND), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                  PendingIntent piToggle = PendingIntent.getService(this, 3, new Intent(this, RadioService.class).setAction(ACTION_TOGGLE), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                  PendingIntent piForward = PendingIntent.getService(this, 4, new Intent(this, RadioService.class).setAction(ACTION_FORWARD), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                  PendingIntent piNext = PendingIntent.getService(this, 5, new Intent(this, RadioService.class).setAction(ACTION_NEXT), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+                  int actionIcon = isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play;
+
+                  return new NotificationCompat.Builder(this, "radio_media_channel")
+                          .setContentTitle(currentTitle)
+                          .setContentText(currentSub)
+                          .setSmallIcon(android.R.drawable.ic_media_play)
+                          .setContentIntent(piOpen)
+                          .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                          .setOngoing(isPlaying)
+                          .addAction(android.R.drawable.ic_media_previous, "Previous", piPrev)
+                          .addAction(android.R.drawable.ic_media_rew, "Rewind", piRewind)
+                          .addAction(actionIcon, isPlaying ? "Pause" : "Play", piToggle)
+                          .addAction(android.R.drawable.ic_media_ff, "Forward", piForward)
+                          .addAction(android.R.drawable.ic_media_next, "Next", piNext)
+                          .setStyle(new androidx.media.app.NotificationCompat.MediaStyle()
+                                  .setMediaSession(mediaSession.getSessionToken())
+                                  .setShowActionsInCompactView(1, 2, 3))
+                          .build();
+              }
+
+              private void createChannel() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      NotificationChannel ch = new NotificationChannel(
+                              "radio_media_channel",
+                              "Radio Media Player",
+                              NotificationManager.IMPORTANCE_LOW
+                      );
+                      ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+                      NotificationManager nm = getSystemService(NotificationManager.class);
+                      if (nm != null) nm.createNotificationChannel(ch);
+                  }
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  if (intent != null && intent.getAction() != null) {
+                      switch (intent.getAction()) {
+                          case ACTION_TOGGLE: toggle(); break;
+                          case ACTION_REWIND: seekDelta(-10000); break;
+                          case ACTION_FORWARD: seekDelta(10000); break;
+                          case ACTION_PREV: triggerAction("prev"); break;
+                          case ACTION_NEXT: triggerAction("next"); break;
+                      }
+                  }
+                  return START_STICKY;
+              }
+
+              @Override
+              public void onDestroy() {
+                  timeHandler.removeCallbacksAndMessages(null);
+                  if (player != null) player.release();
+                  if (mediaSession != null) mediaSession.release();
+                  super.onDestroy();
+              }
+
+              @Override
+              public IBinder onBind(Intent intent) { return binder; }
+          }
+          EOF
+
+          # 7. MainActivity.java
+          cat << 'EOF' > native_app/app/src/main/java/com/sagar/airfm/MainActivity.java
+          package com.sagar.airfm;
+
+          import android.Manifest;
+          import android.app.Activity;
+          import android.content.ComponentName;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.ServiceConnection;
+          import android.content.pm.PackageManager;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.os.IBinder;
+          import android.webkit.JavascriptInterface;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          public class MainActivity extends Activity {
+              private WebView webView;
+              private RadioService service;
+              private boolean bound = false;
+
+              private final ServiceConnection conn = new ServiceConnection() {
+                  @Override
+                  public void onServiceConnected(ComponentName name, IBinder b) {
+                      service = ((RadioService.LocalBinder) b).getService();
+                      bound = true;
+                      service.setProgressCallback((currentMs, durationMs, isPlaying) -> {
+                          runOnUiThread(() -> {
+                              if (webView != null) {
+                                  webView.evaluateJavascript("if(window.onNativeProgressSync) window.onNativeProgressSync(" + currentMs + "," + durationMs + "," + isPlaying + ");", null);
+                              }
+                          });
+                      });
+                      service.setActionListener((action) -> {
+                          runOnUiThread(() -> {
+                              if (webView != null) {
+                                  webView.evaluateJavascript("if(window.handleNativeAction) window.handleNativeAction('" + action + "');", null);
+                              }
+                          });
+                      });
+                  }
+                  @Override
+                  public void onServiceDisconnected(ComponentName name) {
+                      bound = false;
+                  }
+              };
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                      if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                          requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 101);
+                      }
+                  }
+
+                  Intent intent = new Intent(this, RadioService.class);
+                  startForegroundService(intent);
+                  bindService(intent, conn, Context.BIND_AUTO_CREATE);
+
+                  webView = new WebView(this);
+                  setContentView(webView);
+
+                  WebSettings ws = webView.getSettings();
+                  ws.setJavaScriptEnabled(true);
+                  ws.setDomStorageEnabled(true);
+                  ws.setMediaPlaybackRequiresUserGesture(false);
+
+                  webView.addJavascriptInterface(new Object() {
+                      @JavascriptInterface
+                      public void play(String url, String title, String sub) {
+                          runOnUiThread(() -> {
+                              if (bound && service != null) service.playUrl(url, title, sub);
+                          });
+                      }
+
+                      @JavascriptInterface
+                      public void toggle() {
+                          runOnUiThread(() -> {
+                              if (bound && service != null) service.toggle();
+                          });
+                      }
+
+                      @JavascriptInterface
+                      public void seekTo(long targetMs) {
+                          runOnUiThread(() -> {
+                              if (bound && service != null) service.seekTo(targetMs);
+                          });
+                      }
+
+                      @JavascriptInterface
+                      public void seekDelta(long deltaMs) {
+                          runOnUiThread(() -> {
+                              if (bound && service != null) service.seekDelta(deltaMs);
+                          });
+                      }
+
+                      @JavascriptInterface
+                      public void setPlaybackSpeed(float speed) {
+                          runOnUiThread(() -> {
+                              if (bound && service != null) service.setSpeed(speed);
+                          });
+                      }
+
+                      @JavascriptInterface
+                      public void setVolume(float volume) {
+                          runOnUiThread(() -> {
+                              if (bound && service != null) service.setVolumeLevel(volume);
+                          });
+                      }
+                  }, "NativeAudioBridge");
+
+                  webView.setWebViewClient(new WebViewClient());
+                  webView.loadUrl("file:///android_asset/index.html");
+              }
+
+              @Override
+              protected void onDestroy() {
+                  if (bound) unbindService(conn);
+                  if (webView != null) webView.destroy();
+                  super.onDestroy();
+              }
+          }
+          EOF
+
+      - name: Build APK
+        run: |
+          cd native_app
+          gradle wrapper --gradle-version 8.7
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AIR-FM-Rainbow-Full-App
+          path: native_app/app/build/outputs/apk/debug/*.apk
