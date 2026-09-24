@@ -110,7 +110,11 @@ jobs:
                   android:label="AIR FM Rainbow"
                   android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
                   android:usesCleartextTraffic="true">
-                  <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:configChanges="orientation|screenSize">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
@@ -124,7 +128,7 @@ jobs:
           </manifest>
           EOF
 
-          # 6. RadioService.java (Fixed Multi-App Sound Slider & Synced Live Notification Seekbar)
+          # 6. RadioService.java
           cat << 'EOF' > native_app/app/src/main/java/com/sagar/airfm/RadioService.java
           package com.sagar.airfm;
 
@@ -134,7 +138,6 @@ jobs:
           import android.app.PendingIntent;
           import android.app.Service;
           import android.content.Intent;
-          import android.media.AudioManager;
           import android.os.Binder;
           import android.os.Build;
           import android.os.Handler;
@@ -214,8 +217,7 @@ jobs:
                   });
                   mediaSession.setActive(true);
 
-                  // 1. Android 14/15 Multi-App Volume Mixer Support
-                  // Registers STREAM_MUSIC to ensure Android sound panel assigns an app volume slider
+                  // AudioAttributes enables Android multi-app sound slider
                   AudioAttributes audioAttributes = new AudioAttributes.Builder()
                           .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                           .setUsage(C.USAGE_MEDIA)
@@ -223,7 +225,7 @@ jobs:
                           .build();
 
                   player = new ExoPlayer.Builder(this)
-                          .setAudioAttributes(audioAttributes, false) // False keeps dual-audio mixing enabled
+                          .setAudioAttributes(audioAttributes, false)
                           .build();
 
                   player.addListener(new Player.Listener() {
@@ -269,7 +271,6 @@ jobs:
                                   progressCallback.onProgress(cur, activeDurationMs, player.isPlaying());
                               }
 
-                              // Keep media session state and position in continuous sync for system notification seekbar
                               if (player.isPlaying() && !isLiveStream) {
                                   updatePlaybackState(true);
                               }
@@ -283,7 +284,7 @@ jobs:
                   this.currentTitle = (title != null && !title.isEmpty()) ? title : "AIR FM Rainbow";
                   this.currentSub = (sub != null && !sub.isEmpty()) ? sub : "Broadcast";
                   this.isLiveStream = isLive;
-                  this.activeDurationMs = isLive ? -1 : 3600000; // 1 hour (3600s) default for archives
+                  this.activeDurationMs = isLive ? -1 : 3600000;
 
                   updateMetadata();
 
@@ -350,7 +351,6 @@ jobs:
                   mediaSession.setMetadata(meta.build());
               }
 
-              // 2. Notification Seekbar Synced with Actual Current Time & Full Length
               private void updatePlaybackState(boolean isPlaying) {
                   long actions = PlaybackStateCompat.ACTION_PLAY | PlaybackStateCompat.ACTION_PAUSE |
                           PlaybackStateCompat.ACTION_PLAY_PAUSE | PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
@@ -378,7 +378,12 @@ jobs:
               }
 
               private Notification buildMediaNotification(boolean isPlaying) {
+                  // Brings running instance to foreground without reloading
                   Intent openIntent = new Intent(this, MainActivity.class);
+                  openIntent.setAction(Intent.ACTION_MAIN);
+                  openIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+                  openIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+
                   PendingIntent piOpen = PendingIntent.getActivity(
                           this, 0, openIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
                   );
@@ -460,6 +465,7 @@ jobs:
           import android.content.Intent;
           import android.content.ServiceConnection;
           import android.content.pm.PackageManager;
+          import android.media.AudioManager;
           import android.os.Build;
           import android.os.Bundle;
           import android.os.IBinder;
@@ -502,6 +508,9 @@ jobs:
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
+
+                  // Directs hardware volume buttons to media stream
+                  setVolumeControlStream(AudioManager.STREAM_MUSIC);
 
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                       if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -570,6 +579,12 @@ jobs:
               }
 
               @Override
+              protected void onNewIntent(Intent intent) {
+                  super.onNewIntent(intent);
+                  setIntent(intent);
+              }
+
+              @Override
               protected void onDestroy() {
                   if (bound) unbindService(conn);
                   if (webView != null) webView.destroy();
@@ -578,7 +593,7 @@ jobs:
           }
           EOF
 
-          # 8. EMBEDDED ORIGINAL HTML (Exact original UI, clean & complete)
+          # 8. EMBEDDED ORIGINAL HTML
           cat << 'EOF' > native_app/app/src/main/assets/index.html
           <!DOCTYPE html>
           <html lang="en">
@@ -800,12 +815,27 @@ jobs:
 
               .time-strip { display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; color: var(--text-muted); font-weight: 500; margin-top: 2px; }
 
-              /* Action Deck: Shuffle, Prev, Master Play, Next, Repeat */
+              /* Action Deck */
               .deck-action-row { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px; }
-              .circle-icon-btn { background: transparent; border: none; color: var(--text-dim); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 8px; border-radius: 50%; transition: all 0.15s ease; }
+              .circle-icon-btn { background: transparent; border: none; color: var(--text-dim); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 8px; border-radius: 50%; transition: all 0.15s ease; position: relative; }
               .circle-icon-btn:active { transform: scale(0.9); color: #fff; }
               .circle-icon-btn.active { color: #60a5fa; }
               .circle-icon-btn svg { width: 22px; height: 22px; fill: currentColor; }
+
+              .repeat-badge {
+                position: absolute;
+                bottom: -2px;
+                right: -2px;
+                font-size: 0.58rem;
+                font-family: 'JetBrains Mono', monospace;
+                font-weight: 800;
+                background: #1e293b;
+                color: #94a3b8;
+                padding: 1px 4px;
+                border-radius: 4px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+              }
+              .circle-icon-btn.active .repeat-badge { background: #1d4ed8; color: #fff; border-color: #60a5fa; }
 
               .master-toggle-btn {
                 width: 58px;
@@ -836,6 +866,7 @@ jobs:
               .toast-alert p { font-size: 0.78rem; color: #fca5a5; line-height: 1.35; flex: 1; }
               .toast-alert button { background: #ef4444; border: none; color: #fff; font-size: 0.72rem; font-weight: 700; padding: 6px 12px; border-radius: var(--radius-pill); cursor: pointer; }
 
+              /* Date Stepper & System Calendar Field */
               .date-panel {
                 background: var(--card-bg);
                 backdrop-filter: blur(16px);
@@ -851,26 +882,44 @@ jobs:
               .chip-btn { flex: 1; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--card-border); color: var(--text-dim); font-size: 0.75rem; font-weight: 600; padding: 7px 10px; border-radius: var(--radius-pill); cursor: pointer; text-align: center; }
               .chip-btn.active { background: var(--accent); border-color: #60a5fa; color: #fff; }
 
-              .calendar-stepper { display: flex; align-items: center; gap: 8px; }
+              .calendar-stepper { display: flex; align-items: center; gap: 8px; position: relative; }
               .calendar-step-btn { width: 42px; height: 42px; border-radius: var(--radius-md); background: rgba(255, 255, 255, 0.05); border: 1px solid var(--card-border); color: var(--text-main); display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
               .calendar-step-btn:active { background: rgba(255, 255, 255, 0.12); }
 
-              input[type="date"] {
+              .calendar-input-wrapper {
                 flex: 1;
-                height: 42px;
+                display: flex;
+                align-items: center;
                 background: rgba(10, 14, 22, 0.85);
                 border: 1px solid var(--card-border);
                 border-radius: var(--radius-md);
+                padding: 0 10px;
+                height: 42px;
+                cursor: pointer;
+              }
+
+              .calendar-input-wrapper svg {
+                width: 18px;
+                height: 18px;
+                fill: #60a5fa;
+                margin-right: 8px;
+                flex-shrink: 0;
+              }
+
+              input[type="date"] {
+                flex: 1;
+                background: transparent;
+                border: none;
                 color: #fff;
                 font-family: 'JetBrains Mono', monospace;
                 font-size: 0.85rem;
                 font-weight: 600;
-                text-align: center;
                 outline: none;
-                padding: 0 8px;
                 cursor: pointer;
+                width: 100%;
               }
 
+              /* 12 Hourly Slices (07 AM to 07 PM) */
               .timeline-container { display: flex; flex-direction: column; gap: 8px; }
               .section-label-row { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; }
               .section-label { font-size: 0.76rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
@@ -911,6 +960,7 @@ jobs:
                 <div id="trackSubtitle" class="track-subtitle">Real-time live edge broadcast</div>
               </div>
 
+              <!-- Wave Visualizer Screen with Touch-Hold-Move Seek -->
               <div id="touchDeckScreen" class="touch-deck-screen">
                 <canvas id="visualizerCanvas"></canvas>
                 <div class="skip-half left" id="skipHalfLeft">
@@ -940,7 +990,7 @@ jobs:
                 </div>
               </div>
 
-              <!-- Deck Action Controls: Shuffle, Prev, Master Play, Next, Repeat -->
+              <!-- Deck Action Controls -->
               <div class="deck-action-row">
                 <button class="circle-icon-btn" id="btnShuffle" onclick="toggleShuffle()" title="Shuffle Mode">
                   <svg viewBox="0 0 24 24"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
@@ -959,8 +1009,9 @@ jobs:
                   <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
                 </button>
 
-                <button class="circle-icon-btn" id="btnRepeat" onclick="cycleRepeatMode()" title="Repeat Mode">
+                <button class="circle-icon-btn active" id="btnRepeat" onclick="cycleRepeatMode()" title="Repeat Mode">
                   <svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+                  <span id="repeatBadge" class="repeat-badge">ALL</span>
                 </button>
               </div>
 
@@ -982,6 +1033,7 @@ jobs:
               <button onclick="switchToLiveMode()">Go Live</button>
             </div>
 
+            <!-- Date Stepper with Direct System Calendar Dialog -->
             <div class="date-panel">
               <div class="quick-chips-row">
                 <button class="chip-btn active" id="chipToday" onclick="applyQuickDate(0)">Today</button>
@@ -992,13 +1044,17 @@ jobs:
                 <button class="calendar-step-btn" onclick="stepCalendarDay(-1)" title="Previous Day">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
                 </button>
-                <input type="date" id="dateInput" onchange="onDateManualChange()">
+                <div class="calendar-input-wrapper" onclick="triggerNativeDatePicker()">
+                  <svg viewBox="0 0 24 24"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z"/></svg>
+                  <input type="date" id="dateInput" onchange="onDateManualChange()">
+                </div>
                 <button class="calendar-step-btn" onclick="stepCalendarDay(1)" title="Next Day">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
                 </button>
               </div>
             </div>
 
+            <!-- 12 Hourly Slices -->
             <div class="timeline-container">
               <div class="section-label-row">
                 <span class="section-label">Hourly Timeline (07 AM &ndash; 07 PM IST)</span>
@@ -1049,7 +1105,8 @@ jobs:
             let currentDurationSec = 3600;
             let currentPositionSec = 0;
 
-            let repeatMode = 0; // 0 = Auto-Advance, 1 = Repeat Single, 2 = Off
+            // 0 = Repeat All (Default), 1 = Repeat 1, 2 = Repeat Off
+            let repeatMode = 0;
             let isShuffle = false;
 
             const hourBlocks = [
@@ -1075,6 +1132,14 @@ jobs:
             dateInput.max = toYMDString(now);
             dateInput.min = toYMDString(past30Days);
             dateInput.value = toYMDString(now);
+
+            function triggerNativeDatePicker() {
+              if (dateInput.showPicker) {
+                dateInput.showPicker();
+              } else {
+                dateInput.focus();
+              }
+            }
 
             hourBlocks.forEach((slot, idx) => {
               const card = document.createElement("div");
@@ -1107,7 +1172,7 @@ jobs:
               currentTimeDisplay.innerText = formatSeconds(currentPositionSec);
               totalDurationDisplay.innerText = formatSeconds(currentDurationSec);
 
-              if (!isScrubbing) {
+              if (!isScrubbing && !isWaveDragging) {
                 const pct = Math.min(100, Math.max(0, (currentPositionSec / currentDurationSec) * 100));
                 progressBar.style.width = pct + "%";
                 scrubThumb.style.left = pct + "%";
@@ -1223,18 +1288,31 @@ jobs:
               document.getElementById("btnShuffle").classList.toggle("active", isShuffle);
             }
 
+            // Cycle Repeat: 0 = ALL, 1 = 1, 2 = OFF
             function cycleRepeatMode() {
               repeatMode = (repeatMode + 1) % 3;
+              updateRepeatUI();
+            }
+
+            function updateRepeatUI() {
               const btn = document.getElementById("btnRepeat");
+              const badge = document.getElementById("repeatBadge");
+
               if (repeatMode === 0) {
                 btn.classList.add("active");
-                btn.title = "Auto-Advance Slots";
+                badge.innerText = "ALL";
+                badge.style.color = "#fff";
+                badge.style.background = "#1d4ed8";
               } else if (repeatMode === 1) {
                 btn.classList.add("active");
-                btn.title = "Repeat Current Slot (Repeat 1)";
+                badge.innerText = "1";
+                badge.style.color = "#fff";
+                badge.style.background = "#2563eb";
               } else {
                 btn.classList.remove("active");
-                btn.title = "Repeat Off";
+                badge.innerText = "OFF";
+                badge.style.color = "#64748b";
+                badge.style.background = "#0f172a";
               }
             }
 
@@ -1356,6 +1434,7 @@ jobs:
               if (activeIndex >= 0) playArchive(activeIndex);
             }
 
+            // Scrub Bar Interactions
             let isScrubbing = false;
 
             function handleScrubPointer(e) {
@@ -1393,18 +1472,77 @@ jobs:
               }
             });
 
+            // Touch and Hold with Drag to Rewind/Skip on Wave Screen
+            const touchDeckScreen = document.getElementById("touchDeckScreen");
+            let waveTouchStartX = 0;
+            let waveBaseTime = 0;
+            let isWaveDragging = false;
+            let waveDragTargetSec = 0;
+
+            touchDeckScreen.addEventListener("touchstart", (e) => {
+              if (activeIndex === -1) return;
+              waveTouchStartX = e.touches[0].clientX;
+              waveBaseTime = currentPositionSec;
+              isWaveDragging = true;
+              waveDragTargetSec = waveBaseTime;
+            }, { passive: true });
+
+            touchDeckScreen.addEventListener("touchmove", (e) => {
+              if (!isWaveDragging || activeIndex === -1) return;
+              const deltaX = e.touches[0].clientX - waveTouchStartX;
+              // 150px drag maps to +/- 60 seconds
+              const deltaSec = (deltaX / 150) * 60;
+              waveDragTargetSec = Math.max(0, Math.min(currentDurationSec, waveBaseTime + deltaSec));
+
+              const pct = (waveDragTargetSec / currentDurationSec) * 100;
+              progressBar.style.width = pct + "%";
+              scrubThumb.style.left = pct + "%";
+
+              scrubTooltip.style.display = "block";
+              scrubTooltip.style.left = pct + "%";
+              scrubTooltip.innerText = `${deltaSec >= 0 ? '+' : ''}${Math.round(deltaSec)}s (${formatSeconds(waveDragTargetSec)})`;
+            }, { passive: true });
+
+            touchDeckScreen.addEventListener("touchend", () => {
+              if (isWaveDragging && activeIndex !== -1) {
+                if (window.NativeAudioBridge) {
+                  window.NativeAudioBridge.seekTo(waveDragTargetSec * 1000);
+                } else {
+                  coreAudio.currentTime = waveDragTargetSec;
+                }
+              }
+              isWaveDragging = false;
+              scrubTooltip.style.display = "none";
+            });
+
+            // Double Tap Detection for Skip (-10s / +10s)
+            let lastTapLeft = 0;
+            let lastTapRight = 0;
+
             document.getElementById("skipHalfLeft").addEventListener("click", () => {
-              stepAudio(-10);
-              const rip = document.getElementById("rippleLeft");
-              rip.classList.add("show");
-              setTimeout(() => rip.classList.remove("show"), 300);
+              const nowTime = Date.now();
+              if (nowTime - lastTapLeft < 300) {
+                stepAudio(-10);
+                const rip = document.getElementById("rippleLeft");
+                rip.classList.add("show");
+                setTimeout(() => rip.classList.remove("show"), 300);
+                lastTapLeft = 0;
+              } else {
+                lastTapLeft = nowTime;
+              }
             });
 
             document.getElementById("skipHalfRight").addEventListener("click", () => {
-              stepAudio(10);
-              const rip = document.getElementById("rippleRight");
-              rip.classList.add("show");
-              setTimeout(() => rip.classList.remove("show"), 300);
+              const nowTime = Date.now();
+              if (nowTime - lastTapRight < 300) {
+                stepAudio(10);
+                const rip = document.getElementById("rippleRight");
+                rip.classList.add("show");
+                setTimeout(() => rip.classList.remove("show"), 300);
+                lastTapRight = 0;
+              } else {
+                lastTapRight = nowTime;
+              }
             });
 
             function resizeCanvas() {
@@ -1439,8 +1577,14 @@ jobs:
                 const y = (canvas.height - h) / 2;
 
                 const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-                grad.addColorStop(0, activeIndex === -1 ? '#ff4d4d' : '#60a5fa');
-                grad.addColorStop(1, activeIndex === -1 ? '#990000' : '#06b6d4');
+                if (activeIndex === -1) {
+                  // Neon Crimson & Coral Gold for Live edge
+                  grad.addColorStop(0, '#ff0844');
+                  grad.addColorStop(1, '#ffb199');
+                } else {
+                  grad.addColorStop(0, '#60a5fa');
+                  grad.addColorStop(1, '#06b6d4');
+                }
 
                 ctx.fillStyle = grad;
                 ctx.beginPath();
@@ -1450,7 +1594,9 @@ jobs:
             }
             drawVisualizer();
 
-            cycleRepeatMode();
+            // Set repeat mode to ALL on startup
+            repeatMode = 0;
+            updateRepeatUI();
             switchToLiveMode();
           </script>
           </body>
