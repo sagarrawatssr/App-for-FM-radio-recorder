@@ -1435,10 +1435,19 @@ jobs:
               document.getElementById("chipToday").classList.toggle("active", selStr === todayStr);
               document.getElementById("chipYesterday").classList.toggle("active", selStr === toLocalYMDString(yest));
             }
+            // 1. Fixed local date formatter (No UTC rollback)
+            function toLocalYMDString(d) {
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+            }
 
+  
+  
             function openCueSheet() {
               const dateStr = toLocalYMDString(selectedDate);
-              const cueSheetUrl = `https://cuesheets.prasarbharati.org/su_viewSheetByPb/292/${dateStr}`;
+              const cueSheetUrl = `https://cuesheets.prasarbharati.org/su_viewSheetByPb/243/${dateStr}`;
               
               if (window.NativeAudioBridge && window.NativeAudioBridge.openExternalBrowser) {
                 window.NativeAudioBridge.openExternalBrowser(cueSheetUrl);
