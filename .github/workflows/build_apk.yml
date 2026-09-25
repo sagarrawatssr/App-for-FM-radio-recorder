@@ -611,7 +611,7 @@ jobs:
           }
           EOF
 
-          # 8. EMBEDDED ORIGINAL HTML (100% Restored Exact Working Playbar)
+          # 8. EMBEDDED ORIGINAL HTML (Exact Playbar Restored from Attached File)
           cat << 'EOF' > native_app/app/src/main/assets/index.html
           <!DOCTYPE html>
           <html lang="en">
@@ -842,7 +842,7 @@ jobs:
               .skip-ripple.show { opacity: 1; transform: scale(1); }
               .skip-ripple span { font-size: 0.75rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; color: #fff; }
 
-              /* EXACT WORKING PLAYBAR FROM YESTERDAY */
+              /* EXACT PLAYBAR STYLES FROM ATTACHED FILE */
               .yt-scrub-container { position: relative; padding: 10px 0 6px; cursor: pointer; touch-action: none; }
               .yt-scrub-track { position: relative; height: 5px; background: rgba(255, 255, 255, 0.14); border-radius: 4px; transition: height 0.12s ease; }
               .yt-scrub-container:hover .yt-scrub-track, .yt-scrub-container.is-scrubbing .yt-scrub-track { height: 8px; }
@@ -870,7 +870,7 @@ jobs:
 
               .time-strip { display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; color: var(--text-muted); font-weight: 500; margin-top: 2px; }
 
-              /* Action Deck */
+              /* EXACT ACTION DECK STYLES FROM ATTACHED FILE */
               .deck-action-row { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px; }
               .circle-icon-btn { background: transparent; border: none; color: var(--text-dim); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 8px; border-radius: 50%; transition: all 0.15s ease; position: relative; }
               .circle-icon-btn:active { transform: scale(0.9); color: #fff; }
@@ -1161,7 +1161,7 @@ jobs:
                 </div>
               </div>
 
-              <!-- EXACT YESTERDAY SCRUB BAR RESTORED -->
+              <!-- EXACT PLAYBAR MARKUP RESTORED FROM ATTACHED FILE -->
               <div id="ytScrubContainer" class="yt-scrub-container">
                 <div id="scrubTooltip" class="scrub-tooltip">00:00</div>
                 <div class="yt-scrub-track">
@@ -1175,6 +1175,7 @@ jobs:
                 </div>
               </div>
 
+              <!-- EXACT ACTION DECK CONTROLS RESTORED FROM ATTACHED FILE -->
               <div class="deck-action-row">
                 <button class="circle-icon-btn" id="btnShuffle" onclick="toggleShuffle()" title="Shuffle Mode">
                   <svg viewBox="0 0 24 24"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
@@ -1199,6 +1200,7 @@ jobs:
                 </button>
               </div>
 
+              <!-- EXACT VOLUME & SPEED CONTROLS RESTORED FROM ATTACHED FILE -->
               <div class="deck-sub-row">
                 <div class="volume-box">
                   <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
@@ -1216,7 +1218,7 @@ jobs:
               <button onclick="switchToLiveMode()">Go Live</button>
             </div>
 
-            <!-- Date Stepper with Google Calendar Dialog -->
+            <!-- Date Stepper with Material Calendar Picker -->
             <div class="date-panel">
               <div class="quick-chips-row">
                 <button class="chip-btn active" id="chipToday" onclick="applyQuickDate(0)">Today</button>
@@ -1237,6 +1239,7 @@ jobs:
               </div>
             </div>
 
+            <!-- 12 Hourly Timeline Cards -->
             <div class="timeline-container">
               <div class="section-label-row">
                 <span class="section-label">Hourly Timeline (07 AM &ndash; 07 PM IST)</span>
@@ -1304,10 +1307,12 @@ jobs:
           </div>
 
           <script>
+            /* System Constants */
             const REPO_OWNER = "sagarrawatssr";
             const REPO_NAME = "air-fm-recorder";
             const STREAM_URL = "https://airhlspush.pc.cdn.bitgravity.com/httppush/hlspbaudio004/hlspbaudio00464kbps.m3u8";
 
+            /* Elements */
             const coreAudio = document.getElementById("coreAudio");
             const masterPlayBtn = document.getElementById("masterPlayBtn");
             const playIcon = document.getElementById("playIcon");
@@ -1339,13 +1344,16 @@ jobs:
             let currentDurationSec = 3600;
             let currentPositionSec = 0;
 
+            // 0 = Repeat All (Default), 1 = Repeat 1, 2 = Repeat Off
             let repeatMode = 0;
             let isShuffle = false;
 
+            // Sleep Timer State
             let sleepTimerId = null;
             let sleepTargetTimestamp = null;
             let sleepIntervalId = null;
 
+            /* 12 Hourly Broadcast Segments */
             const hourBlocks = [
               { label: "07 - 08 AM", file: "hour_00.mp3" },
               { label: "08 - 09 AM", file: "hour_01.mp3" },
@@ -1361,6 +1369,7 @@ jobs:
               { label: "06 - 07 PM", file: "hour_11.mp3" }
             ];
 
+            /* 30-Day Rolling Date Calendar Boundaries */
             const now = new Date();
             const past30Days = new Date();
             past30Days.setDate(now.getDate() - 30);
@@ -1507,6 +1516,7 @@ jobs:
               window.onNativeAudioError();
             });
 
+            /* Render 12 Horizontal Hourly Cards */
             hourBlocks.forEach((slot, idx) => {
               const card = document.createElement("div");
               card.className = "slot-card";
@@ -1520,7 +1530,7 @@ jobs:
               timelineTrack.appendChild(card);
             });
 
-            // EXACT PROGRESS SYNC FOR PLAYBAR (Yesterday's logic restored)
+            /* EXACT ATTACHED FILE - PROGRESS SYNC FOR PLAYBAR */
             window.onNativeProgressSync = function(curMs, durMs, isPlaying) {
               isNativePlaying = isPlaying;
               setPlayState(isPlaying);
@@ -1538,7 +1548,7 @@ jobs:
               currentTimeDisplay.innerText = formatSeconds(currentPositionSec);
               totalDurationDisplay.innerText = formatSeconds(currentDurationSec);
 
-              if (!isScrubbing) {
+              if (!isScrubbing && !isWaveDragging) {
                 const pct = Math.min(100, Math.max(0, (currentPositionSec / currentDurationSec) * 100));
                 progressBar.style.width = pct + "%";
                 scrubThumb.style.left = pct + "%";
@@ -1766,7 +1776,7 @@ jobs:
               document.querySelectorAll(".slot-card").forEach(c => c.classList.remove("active"));
             }
 
-            // EXACT YESTERDAY SCRUB BAR HANDLER (100% Responsive)
+            /* EXACT ATTACHED FILE - SCRUB BAR EVENT HANDLER */
             let isScrubbing = false;
 
             function handleScrubPointer(e) {
@@ -1804,7 +1814,7 @@ jobs:
               }
             });
 
-            // Touch Screen Seek / Hold
+            /* EXACT ATTACHED FILE - TOUCH/HOLD/SLIDE SCREEN SEEKING */
             const touchDeckScreen = document.getElementById("touchDeckScreen");
             let waveTouchStartX = 0;
             let waveBaseTime = 0;
@@ -1846,7 +1856,7 @@ jobs:
               scrubTooltip.style.display = "none";
             });
 
-            // Double Tap Skip (-10s / +10s)
+            /* EXACT ATTACHED FILE - DOUBLE TAP SKIPS */
             let lastTapLeft = 0;
             let lastTapRight = 0;
 
@@ -1876,7 +1886,7 @@ jobs:
               }
             });
 
-            // Sleep Timer Controller with Custom Minutes
+            /* Sleep Timer Functions */
             function openSleepModal() {
               document.getElementById("sleepModal").style.display = "flex";
             }
@@ -1940,7 +1950,7 @@ jobs:
               closeSleepModal();
             }
 
-            // Neon Crimson / Coral Gold Visualizer Waves
+            /* Audio Canvas Visualizer */
             function resizeCanvas() {
               canvas.width = canvas.parentElement.clientWidth;
               canvas.height = canvas.parentElement.clientHeight;
@@ -1989,6 +1999,7 @@ jobs:
             }
             drawVisualizer();
 
+            /* Initial Boot */
             updateDateHeaders();
             repeatMode = 0;
             updateRepeatUI();
