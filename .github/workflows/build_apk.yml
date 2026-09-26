@@ -128,7 +128,7 @@ jobs:
           </manifest>
           EOF
 
-          # 6. RadioService.java
+          # 6. RadioService.java (Native Background Sleep Timer)
           cat << 'EOF' > native_app/app/src/main/java/com/sagar/airfm/RadioService.java
           package com.sagar.airfm;
 
@@ -170,9 +170,12 @@ jobs:
               private long activeDurationMs = 0;
               private final IBinder binder = new LocalBinder();
               private final Handler timeHandler = new Handler(Looper.getMainLooper());
+              private final Handler sleepTimerHandler = new Handler(Looper.getMainLooper());
+              private Runnable sleepTimerRunnable;
               private ProgressCallback progressCallback;
               private ActionListener actionListener;
               private ErrorCallback errorCallback;
+              private SleepTimerCallback sleepTimerCallback;
 
               public interface ProgressCallback {
                   void onProgress(long currentMs, long durationMs, boolean isPlaying);
@@ -186,6 +189,10 @@ jobs:
                   void onError(String message);
               }
 
+              public interface SleepTimerCallback {
+                  void onSleepTimerFinished();
+              }
+
               public class LocalBinder extends Binder {
                   public RadioService getService() { return RadioService.this; }
               }
@@ -193,6 +200,7 @@ jobs:
               public void setProgressCallback(ProgressCallback callback) { this.progressCallback = callback; }
               public void setActionListener(ActionListener listener) { this.actionListener = listener; }
               public void setErrorCallback(ErrorCallback callback) { this.errorCallback = callback; }
+              public void setSleepTimerCallback(SleepTimerCallback callback) { this.sleepTimerCallback = callback; }
 
               @Override
               public void onCreate() {
@@ -290,6 +298,28 @@ jobs:
                   }, 1000);
               }
 
+              // Reliable Native Background Sleep Timer (works even if screen is locked)
+              public void startNativeSleepTimer(long millis) {
+                  cancelNativeSleepTimer();
+                  sleepTimerRunnable = new Runnable() {
+                      @Override
+                      public void run() {
+                          pause();
+                          if (sleepTimerCallback != null) {
+                              sleepTimerCallback.onSleepTimerFinished();
+                          }
+                      }
+                  };
+                  sleepTimerHandler.postDelayed(sleepTimerRunnable, millis);
+              }
+
+              public void cancelNativeSleepTimer() {
+                  if (sleepTimerRunnable != null) {
+                      sleepTimerHandler.removeCallbacks(sleepTimerRunnable);
+                      sleepTimerRunnable = null;
+                  }
+              }
+
               public void playUrl(String streamUrl, String title, String sub, boolean isLive) {
                   this.currentTitle = (title != null && !title.isEmpty()) ? title : "AIR FM Rainbow";
                   this.currentSub = (sub != null && !sub.isEmpty()) ? sub : "Broadcast";
@@ -311,6 +341,12 @@ jobs:
                   if (player != null) {
                       if (player.isPlaying()) player.pause();
                       else player.play();
+                  }
+              }
+
+              public void pause() {
+                  if (player != null && player.isPlaying()) {
+                      player.pause();
                   }
               }
 
@@ -453,6 +489,7 @@ jobs:
               @Override
               public void onDestroy() {
                   timeHandler.removeCallbacksAndMessages(null);
+                  cancelNativeSleepTimer();
                   if (player != null) player.release();
                   if (mediaSession != null) mediaSession.release();
                   super.onDestroy();
@@ -518,6 +555,13 @@ jobs:
                               }
                           });
                       });
+                      service.setSleepTimerCallback(() -> {
+                          runOnUiThread(() -> {
+                              if (webView != null) {
+                                  webView.evaluateJavascript("if(window.onNativeSleepTimerFinished) window.onNativeSleepTimerFinished();", null);
+                              }
+                          });
+                      });
                   }
                   @Override
                   public void onServiceDisconnected(ComponentName name) {
@@ -579,6 +623,27 @@ jobs:
                       public void toggle() {
                           runOnUiThread(() -> {
                               if (bound && service != null) service.toggle();
+                          });
+                      }
+
+                      @JavascriptInterface
+                      public void pause() {
+                          runOnUiThread(() -> {
+                              if (bound && service != null) service.pause();
+                          });
+                      }
+
+                      @JavascriptInterface
+                      public void startSleepTimer(long millis) {
+                          runOnUiThread(() -> {
+                              if (bound && service != null) service.startNativeSleepTimer(millis);
+                          });
+                      }
+
+                      @JavascriptInterface
+                      public void cancelSleepTimer() {
+                          runOnUiThread(() -> {
+                              if (bound && service != null) service.cancelNativeSleepTimer();
                           });
                       }
 
@@ -648,7 +713,7 @@ jobs:
           }
           EOF
 
-          # 8. EMBEDDED ORIGINAL HTML
+          # 8. EMBEDDED ORIGINAL HTML (With Time's Up Modal & Native Sleep Integration)
           cat << 'EOF' > native_app/app/src/main/assets/index.html
           <!DOCTYPE html>
           <html lang="en">
@@ -879,6 +944,7 @@ jobs:
               .skip-ripple.show { opacity: 1; transform: scale(1); }
               .skip-ripple span { font-size: 0.75rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; color: #fff; }
 
+              /* EXACT PLAYBAR STYLES FROM ATTACHED FILE */
               .yt-scrub-container { position: relative; padding: 10px 0 6px; cursor: pointer; touch-action: none; }
               .yt-scrub-track { position: relative; height: 5px; background: rgba(255, 255, 255, 0.14); border-radius: 4px; transition: height 0.12s ease; }
               .yt-scrub-container:hover .yt-scrub-track, .yt-scrub-container.is-scrubbing .yt-scrub-track { height: 8px; }
@@ -906,6 +972,7 @@ jobs:
 
               .time-strip { display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; color: var(--text-muted); font-weight: 500; margin-top: 2px; }
 
+              /* EXACT ACTION DECK STYLES FROM ATTACHED FILE */
               .deck-action-row { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px; }
               .circle-icon-btn { background: transparent; border: none; color: var(--text-dim); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 8px; border-radius: 50%; transition: all 0.15s ease; position: relative; }
               .circle-icon-btn:active { transform: scale(0.9); color: #fff; }
@@ -957,6 +1024,7 @@ jobs:
               .toast-alert p { font-size: 0.78rem; color: #fca5a5; line-height: 1.35; flex: 1; }
               .toast-alert button { background: #ef4444; border: none; color: #fff; font-size: 0.72rem; font-weight: 700; padding: 6px 12px; border-radius: var(--radius-pill); cursor: pointer; }
 
+              /* Date Panel */
               .date-panel {
                 background: var(--card-bg);
                 backdrop-filter: blur(16px);
@@ -994,6 +1062,7 @@ jobs:
               }
               .calendar-display-box svg { width: 17px; height: 17px; fill: #60a5fa; }
 
+              /* 12 Hourly Slices */
               .timeline-container { display: flex; flex-direction: column; gap: 8px; }
               .section-label-row { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; }
               .section-label { font-size: 0.76rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
@@ -1009,6 +1078,7 @@ jobs:
               .slot-time-text { font-size: 0.8rem; font-weight: 700; color: #fff; }
               .slot-desc { font-size: 0.68rem; color: var(--text-dim); }
 
+              /* Material Google Calendar Dialog Modal */
               .modal-overlay {
                 position: fixed;
                 top: 0; left: 0; right: 0; bottom: 0;
@@ -1088,6 +1158,7 @@ jobs:
               .gcal-btn { background: transparent; border: none; color: #60a5fa; font-weight: 700; font-size: 0.85rem; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
               .gcal-btn:active { background: rgba(96, 165, 250, 0.15); }
 
+              /* Sleep Timer Bottom Modal */
               .sleep-sheet {
                 width: 100%;
                 max-width: 480px;
@@ -1138,6 +1209,29 @@ jobs:
               .custom-set-btn { background: var(--accent); border: none; color: #fff; padding: 8px 16px; border-radius: 8px; font-weight: 700; font-size: 0.8rem; cursor: pointer; }
 
               .timer-turn-off-btn { width: 100%; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; padding: 11px; border-radius: var(--radius-md); font-size: 0.82rem; font-weight: 700; cursor: pointer; text-align: center; }
+
+              /* Time's Up Alert Modal */
+              .timeup-dialog {
+                width: 100%;
+                max-width: 320px;
+                background: #1e293b;
+                border-radius: 20px;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.85);
+                padding: 22px 20px;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                text-align: center;
+                animation: dialogPop 0.22s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+              }
+              .timeup-icon { font-size: 2.2rem; }
+              .timeup-title { font-size: 1.15rem; font-weight: 800; color: #fff; }
+              .timeup-msg { font-size: 0.8rem; color: var(--text-dim); line-height: 1.4; }
+              .timeup-actions { display: flex; gap: 10px; margin-top: 6px; }
+              .timeup-btn { flex: 1; padding: 10px; border-radius: 10px; font-size: 0.85rem; font-weight: 700; cursor: pointer; border: none; }
+              .timeup-btn.primary { background: #3b82f6; color: #fff; }
+              .timeup-btn.secondary { background: rgba(255, 255, 255, 0.08); color: var(--text-dim); }
             </style>
           </head>
           <body>
@@ -1155,7 +1249,7 @@ jobs:
                 </button>
 
                 <button id="sleepTimerBtn" class="top-action-pill" onclick="openSleepModal()" title="Sleep Timer">
-                  <svg viewBox="0 0 24 24"><path d="M12.3 2a10 10 0 0 0-1.9 19.8 10 10 0 0 1-9.6-8.3z"/></svg>
+                  <svg viewBox="0 0 24 24"><path d="M12.3 2a10 10 0 0 0-1.9 19.8 10 10 0 0 0 11.5-11.5 10 10 0 0 1-9.6-8.3z"/></svg>
                   <span id="sleepTimerLabel">Timer</span>
                 </button>
 
@@ -1334,6 +1428,19 @@ jobs:
               </div>
             </div>
 
+            <!-- Time's Up Popup Modal -->
+            <div class="modal-overlay" id="timeUpModal">
+              <div class="timeup-dialog" onclick="event.stopPropagation()">
+                <div class="timeup-icon">⏰</div>
+                <div class="timeup-title">Time's Up!</div>
+                <div class="timeup-msg">The sleep timer has reached zero and radio playback was stopped.</div>
+                <div class="timeup-actions">
+                  <button class="timeup-btn secondary" onclick="closeTimeUpModal()">Close</button>
+                  <button class="timeup-btn primary" onclick="closeTimeUpModal()">OK</button>
+                </div>
+              </div>
+            </div>
+
             <audio id="coreAudio" playsinline preload="none"></audio>
           </div>
 
@@ -1435,19 +1542,10 @@ jobs:
               document.getElementById("chipToday").classList.toggle("active", selStr === todayStr);
               document.getElementById("chipYesterday").classList.toggle("active", selStr === toLocalYMDString(yest));
             }
-            // 1. Fixed local date formatter (No UTC rollback)
-            function toLocalYMDString(d) {
-            const year = d.getFullYear();
-            const month = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-            }
 
-  
-  
             function openCueSheet() {
               const dateStr = toLocalYMDString(selectedDate);
-              const cueSheetUrl = `https://cuesheets.prasarbharati.org/su_viewSheetByPb/243/${dateStr}`;
+              const cueSheetUrl = `https://cuesheets.prasarbharati.org/su_viewSheetByPb/292/${dateStr}`;
               
               if (window.NativeAudioBridge && window.NativeAudioBridge.openExternalBrowser) {
                 window.NativeAudioBridge.openExternalBrowser(cueSheetUrl);
@@ -1646,6 +1744,11 @@ jobs:
               else if (action === "prev") playPrevious();
             };
 
+            // Callback when Native Service Sleep Timer ends
+            window.onNativeSleepTimerFinished = function() {
+              triggerSleepTimerFinished();
+            };
+
             function playViaNativeBridge(url, title, sub, isLive) {
               if (window.NativeAudioBridge) {
                 toastAlert.style.display = "none";
@@ -1834,12 +1937,26 @@ jobs:
               }
             }
 
+            function explicitPause() {
+              if (window.NativeAudioBridge && window.NativeAudioBridge.pause) {
+                window.NativeAudioBridge.pause();
+              } else if (window.NativeAudioBridge) {
+                if (isNativePlaying) window.NativeAudioBridge.toggle();
+              }
+              if (!coreAudio.paused) {
+                coreAudio.pause();
+              }
+              isNativePlaying = false;
+              setPlayState(false);
+            }
+
             function setPlayState(isPlaying) {
               playIcon.style.display = isPlaying ? "none" : "block";
               pauseIcon.style.display = isPlaying ? "block" : "none";
               masterPlayBtn.classList.toggle("is-playing", isPlaying);
             }
 
+            /* PROTECTED STEPAUDIO */
             function stepAudio(seconds) {
               if (activeIndex === -1) return;
               if (window.NativeAudioBridge) {
@@ -1864,7 +1981,7 @@ jobs:
               document.querySelectorAll(".slot-card").forEach(c => c.classList.remove("active"));
             }
 
-            /* EXACT ATTACHED FILE - SCRUB BAR EVENT HANDLER */
+            /* SCRUB BAR HANDLER */
             let isScrubbing = false;
 
             function handleScrubPointer(e) {
@@ -1910,7 +2027,7 @@ jobs:
               }
             });
 
-            /* EXACT ATTACHED FILE - TOUCH/HOLD/SLIDE SCREEN SEEKING */
+            /* TOUCH SCREEN SEEK / HOLD */
             const touchDeckScreen = document.getElementById("touchDeckScreen");
             let waveTouchStartX = 0;
             let waveBaseTime = 0;
@@ -1952,7 +2069,7 @@ jobs:
               scrubTooltip.style.display = "none";
             });
 
-            /* EXACT ATTACHED FILE - DOUBLE TAP SKIPS */
+            /* DOUBLE TAP SKIPS */
             let lastTapLeft = 0;
             let lastTapRight = 0;
 
@@ -2003,23 +2120,38 @@ jobs:
             function setSleepTimer(minutes) {
               clearSleepTimer();
               const btn = document.getElementById("sleepTimerBtn");
-              sleepTargetTimestamp = Date.now() + (minutes * 60 * 1000);
+              const millis = minutes * 60 * 1000;
+              sleepTargetTimestamp = Date.now() + millis;
               btn.classList.add("active");
 
               updateTimerDisplay();
               sleepIntervalId = setInterval(updateTimerDisplay, 1000);
 
+              // 1. If Native Android App: hand timer execution over to Native Service Handler
+              if (window.NativeAudioBridge && window.NativeAudioBridge.startSleepTimer) {
+                window.NativeAudioBridge.startSleepTimer(millis);
+              }
+
+              // 2. Web browser fallback timer
               sleepTimerId = setTimeout(() => {
-                if (isNativePlaying) {
-                  togglePlayPause();
-                } else if (!coreAudio.paused) {
-                  coreAudio.pause();
-                  setPlayState(false);
-                }
-                clearSleepTimer();
-              }, minutes * 60 * 1000);
+                triggerSleepTimerFinished();
+              }, millis);
 
               closeSleepModal();
+            }
+
+            function triggerSleepTimerFinished() {
+              explicitPause();
+              clearSleepTimer();
+              openTimeUpModal();
+            }
+
+            function openTimeUpModal() {
+              document.getElementById("timeUpModal").style.display = "flex";
+            }
+
+            function closeTimeUpModal() {
+              document.getElementById("timeUpModal").style.display = "none";
             }
 
             function updateTimerDisplay() {
@@ -2039,6 +2171,10 @@ jobs:
               sleepTimerId = null;
               sleepIntervalId = null;
               sleepTargetTimestamp = null;
+
+              if (window.NativeAudioBridge && window.NativeAudioBridge.cancelSleepTimer) {
+                window.NativeAudioBridge.cancelSleepTimer();
+              }
 
               const btn = document.getElementById("sleepTimerBtn");
               btn.classList.remove("active");
