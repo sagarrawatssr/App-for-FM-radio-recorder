@@ -718,7 +718,7 @@ jobs:
 
           # 8. EMBEDDED ORIGINAL HTML (With Time's Up Modal & Native Sleep Integration)
           # 3. Swap the placeholder with the real active stream from streams.json
-          sed -i "s|PLACEHOLDER_ACTIVE_STREAM|$ACTIVE_URL|g" native_app/app/src/main/assets/index.html
+         
           <!DOCTYPE html>
           <html lang="en">
           <head>
@@ -2244,7 +2244,7 @@ jobs:
           </body>
           </html>
           EOF
-
+          sed -i "s|PLACEHOLDER_ACTIVE_STREAM|$ACTIVE_URL|g" native_app/app/src/main/assets/index.html
       - name: Build Standalone APK
         run: |
           cd native_app
