@@ -718,7 +718,7 @@ jobs:
 
           # 8. EMBEDDED ORIGINAL HTML (With Time's Up Modal & Native Sleep Integration)
           # 3. Swap the placeholder with the real active stream from streams.json
-         
+          cat << 'EOF' > native_app/app/src/main/assets/index.html
           <!DOCTYPE html>
           <html lang="en">
           <head>
