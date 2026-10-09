@@ -2244,7 +2244,10 @@ jobs:
           </body>
           </html>
           EOF
-          sed -i "s|PLACEHOLDER_ACTIVE_STREAM|$ACTIVE_URL|g" native_app/app/src/main/assets/index.html
+          if [ -n "$ACTIVE_URL" ] && [ "$ACTIVE_URL" != "null" ]; then
+            sed -i -E "s|const STREAM_URL = \".*\";|const STREAM_URL = \"$ACTIVE_URL\";|g" native_app/app/src/main/assets/index.html
+            echo "Successfully updated STREAM_URL in embedded index.html"
+          fi
       - name: Build Standalone APK
         run: |
           cd native_app
