@@ -602,15 +602,23 @@ jobs:
                   cookieManager.setAcceptCookie(true);
                   cookieManager.setAcceptThirdPartyCookies(webView, true);
 
-                  webView.setWebChromeClient(new WebChromeClient());
-                                    webView.setWebViewClient(new WebViewClient() {
-                      @Override
-                      public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                          view.loadUrl(request.getUrl().toString());
-                          return true;
-                      }
-                  });
-
+                  webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+           String url = request.getUrl().toString();
+           if (url.startsWith("file:///android_asset/")) {
+            return false;
+           }
+           // Force external redirect to device default browser
+             try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            intent.addCategory(Intent.CATEGORY_BROWSABLE);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+           } catch (Exception ignored) {}
+             return true;
+           }
+          });
 
                   webView.addJavascriptInterface(new Object() {
                       @JavascriptInterface
@@ -677,36 +685,31 @@ jobs:
                       }
 
                        @JavascriptInterface
-                      public void openExternalBrowser(String url) {
-                          runOnUiThread(() -> {
-                              try {
-                                  Intent browserIntent = new Intent(Intent.ACTION_VIEW);
-                                  browserIntent.setData(Uri.parse(url));
-                                  browserIntent.addCategory(Intent.CATEGORY_BROWSABLE);
-                                  browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                                  startActivity(Intent.createChooser(browserIntent, "Open Cue Sheet with..."));
-                              } catch (Exception e) {
-                                  try {
-                                      Intent fallback = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                                      fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                                      startActivity(fallback);
-                                  } catch (Exception ignored) {}
-                              }
-                          });
-                      }
-                  }, "NativeAudioBridge");
+                 public void openExternalBrowser(String url) {
+               runOnUiThread(() -> {
+              try {
+            Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            browserIntent.addCategory(Intent.CATEGORY_BROWSABLE);
+            browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(browserIntent);
+            } catch (Exception ignored) {}
+          });
+           }
+
 
                   webView.loadUrl("file:///android_asset/index.html");
               }
 
               @Override
-              public void onBackPressed() {
-                  if (webView != null && webView.canGoBack()) {
-                      webView.goBack();
-                  } else {
-                      super.onBackPressed();
-                  }
-              }
+           public void onBackPressed() {
+          // If user somehow loaded an external web page inside WebView, force-reload the local player
+          if (webView != null && webView.getUrl() != null && !webView.getUrl().startsWith("file:///android_asset/")) {
+            webView.loadUrl("file:///android_asset/index.html");
+           } else {
+            super.onBackPressed();
+           }
+            }
+
 
               @Override
               protected void onNewIntent(Intent intent) {
