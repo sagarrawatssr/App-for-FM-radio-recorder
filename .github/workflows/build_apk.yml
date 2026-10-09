@@ -26,6 +26,9 @@ jobs:
           mkdir -p native_app/app/src/main/res/values
           mkdir -p native_app/app/src/main/assets
 
+        
+          ACTIVE_URL=$(jq -r '.active_stream' streams.json)
+          echo "Baking active URL into embedded HTML: $ACTIVE_URL"
           # 1. gradle.properties
           cat << 'EOF' > native_app/gradle.properties
           android.useAndroidX=true
@@ -714,7 +717,8 @@ jobs:
           EOF
 
           # 8. EMBEDDED ORIGINAL HTML (With Time's Up Modal & Native Sleep Integration)
-          cat << 'EOF' > native_app/app/src/main/assets/index.html
+          # 3. Swap the placeholder with the real active stream from streams.json
+          sed -i "s|PLACEHOLDER_ACTIVE_STREAM|$ACTIVE_URL|g" native_app/app/src/main/assets/index.html
           <!DOCTYPE html>
           <html lang="en">
           <head>
@@ -1448,7 +1452,7 @@ jobs:
             /* System Constants */
             const REPO_OWNER = "sagarrawatssr";
             const REPO_NAME = "air-fm-recorder";
-            const STREAM_URL = "https://airhlspush.pc.cdn.bitgravity.com/httppush/hlspbaudio004/hlspbaudio00464kbps.m3u8";
+            const STREAM_URL = "PLACEHOLDER_ACTIVE_STREAM";
 
             /* Elements */
             const coreAudio = document.getElementById("coreAudio");
